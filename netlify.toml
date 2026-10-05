@@ -4,8 +4,11 @@
   publish = "dist"
 
 [build.environment]
-  # Paste your Apps Script /exec URL here (public by design — every action is checked against a session token).
+  # Replace "mock" with your Apps Script /exec URL to go live ("mock" = demo site with sample data, stored in each visitor's browser).
+  # This value overrides one set in the Netlify UI. It's public by design: it ships in the site's JavaScript,
+  # and every request is checked against a signed-in session — so it's excluded from Netlify's secret scan.
   VITE_ENDPOINT = "mock"
+  SECRETS_SCAN_OMIT_KEYS = "VITE_ENDPOINT"
   NODE_VERSION = "20"
 
 [[redirects]]

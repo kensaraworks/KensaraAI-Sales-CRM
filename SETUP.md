@@ -25,7 +25,7 @@ Allow about 20 minutes.
 
 1. The code lives at [github.com/kensaraworks/KensaraAI-Sales-CRM](https://github.com/kensaraworks/KensaraAI-Sales-CRM).
 2. Netlify → **Add new site → Import from Git** → pick `kensaraworks/KensaraAI-Sales-CRM`. Leave the build settings as they are (they come from `netlify.toml`).
-3. In [`netlify.toml`](netlify.toml) set `VITE_ENDPOINT` to your `/exec` URL (or set it under Site settings → Environment variables).
+3. In [`netlify.toml`](netlify.toml) replace `VITE_ENDPOINT = "mock"` with your `/exec` URL, then commit and push. (Set it in this file, not in the Netlify dashboard: the file wins. While it says `mock`, the site is a demo with sample data.)
 4. Deploy. Every team member then uses the same site URL. On phones, choose *Add to Home Screen* and it behaves like an app.
 
 ## 3. First sign-in (you)
