@@ -167,12 +167,23 @@ function sync(a, b) {
   const since = full ? 0 : Number(b.since) || 0;
   const changes = [];
   if (since < meta.seq) {
-    const keys = Object.keys(meta.shards);
-    for (let i = 0; i < keys.length; i++) {
-      if (meta.shards[keys[i]] <= since) continue;
-      const f = readShard(keys[i]);
-      collect(f.records, since, changes);
-      if (!full) collect(f.tombs, since, changes);
+    // Fast path: recent changes are kept in memory (the journal), so most syncs never touch Drive.
+    let done = false;
+    if (!full) {
+      const j = journalGet(meta.seq);
+      if (j && since >= j.floor) {
+        for (let i = 0; i < j.recs.length; i++) if (j.recs[i].rev > since) changes.push(j.recs[i]);
+        done = true;
+      }
+    }
+    if (!done) {
+      const keys = Object.keys(meta.shards);
+      for (let i = 0; i < keys.length; i++) {
+        if (meta.shards[keys[i]] <= since) continue;
+        const f = readShard(keys[i], meta.shards[keys[i]]);
+        collect(f.records, since, changes);
+        if (!full) collect(f.tombs, since, changes);
+      }
     }
   }
 
@@ -200,9 +211,12 @@ function shardOf(kind, id) {
 
 function applyOps(ops, a) {
   const meta = getMeta();
+  const prevSeq = meta.seq;
   const open = {};
-  const get = function (k) { if (!open[k]) open[k] = readShard(k); return open[k]; };
+  const get = function (k) { if (!open[k]) open[k] = readShard(k, meta.shards[k]); return open[k]; };
   const dirty = {};
+  const touched = {};
+  const purged = [];
   const applied = {};
   const rejected = [];
   const audit = [];
@@ -214,7 +228,7 @@ function applyOps(ops, a) {
     return acc ? acc.name : '';
   };
 
-  for (let i = 0; i < ops.length && i < 300; i++) {
+  for (let i = 0; i < ops.length && i < 600; i++) {
     const op = ops[i];
     if (!op || !KINDS[op.kind] || typeof op.id !== 'string' || op.id.indexOf(KINDS[op.kind]) !== 0 || op.id.length > 40 || !/^[a-z0-9]+$/.test(op.id)) {
       rejected.push({ oid: op && op.oid, error: 'bad-op' });
@@ -233,6 +247,7 @@ function applyOps(ops, a) {
         if (!r) return;
         delete sh.records[id];
         sh.tombs[id] = { id: id, kind: r.kind, rev: ++meta.seq, deleted: true };
+        touched[id] = sh.tombs[id];
         meta.shards[k] = meta.seq;
         dirty[k] = 1;
         gone.push(id);
@@ -247,7 +262,7 @@ function applyOps(ops, a) {
           Object.keys(sh.records).forEach(function (id) { if (sh.records[id].accountId === op.id) kill(k, id); });
         });
       }
-      try { purgeAudit(gone); } catch (err) { console.error(err); }
+      purged.push.apply(purged, gone);
       applied[op.oid] = meta.seq;
       continue;
     }
@@ -260,6 +275,7 @@ function applyOps(ops, a) {
       const rec = Object.assign({}, data, { id: op.id, kind: op.kind, rev: ++meta.seq, createdAt: at, createdBy: a.id, updatedAt: at, updatedBy: a.id });
       if (JSON.stringify(rec).length > 40000) { meta.seq--; rejected.push({ oid: op.oid, error: 'too-large' }); continue; }
       shard.records[op.id] = rec;
+      touched[op.id] = rec;
       meta.shards[sk] = meta.seq;
       dirty[sk] = 1;
       const ch = {};
@@ -285,15 +301,19 @@ function applyOps(ops, a) {
     next.updatedAt = at;
     next.updatedBy = a.id;
     shard.records[op.id] = next;
+    touched[op.id] = next;
     meta.shards[sk] = meta.seq;
     dirty[sk] = 1;
     audit.push([meta.seq, at, a.name, a.id, 'update', op.kind, op.id, companyOf(next), changes]);
     applied[op.oid] = meta.seq;
   }
 
-  Object.keys(dirty).forEach(function (k) { writeShard(k, open[k]); });
+  if (meta.seq === prevSeq) return { applied: applied, rejected: rejected };
+  Object.keys(dirty).forEach(function (k) { writeShard(k, open[k], meta.shards[k]); });
   setMeta(meta);
+  journalAdd(prevSeq, meta.seq, Object.keys(touched).map(function (id) { return touched[id]; }));
   if (audit.length) { try { writeAudit(audit); } catch (err) { console.error(err); } }
+  if (purged.length) { try { purgeAudit(purged); } catch (err) { console.error(err); } }
   return { applied: applied, rejected: rejected };
 }
 
@@ -366,10 +386,19 @@ function purgeAudit(ids) {
   const sh = sheet('Audit', AUDIT_COLS);
   const last = sh.getLastRow();
   if (last < 2) return;
-  const col = sh.getRange(2, 7, last - 1, 1);
-  const rowsToDelete = [];
-  ids.forEach(function (id) { col.createTextFinder(id).matchEntireCell(true).findAll().forEach(function (r) { rowsToDelete.push(r.getRow()); }); });
-  rowsToDelete.sort(function (x, y) { return y - x; }).forEach(function (r) { sh.deleteRow(r); });
+  // One read and one write, however many rows go (deleting row by row times out on big purges).
+  const gone = {};
+  ids.forEach(function (id) { gone[id] = 1; });
+  const range = sh.getRange(2, 1, last - 1, AUDIT_COLS.length);
+  const vals = range.getValues();
+  const keep = vals.filter(function (r) { return !gone[String(r[6])]; });
+  if (keep.length === vals.length) return;
+  range.clearContent();
+  if (keep.length) {
+    const r2 = sh.getRange(2, 1, keep.length, AUDIT_COLS.length);
+    r2.setNumberFormat('@');
+    r2.setValues(keep.map(function (row) { return row.map(String); }));
+  }
 }
 
 function logAccess(m, event, device) {
@@ -593,7 +622,7 @@ function restore(id) {
     const data = JSON.parse(f.getBlob().getDataAsString() || '{}');
     const recs = data.records || {};
     Object.keys(recs).forEach(function (rid) { recs[rid].rev = ++meta.seq; });
-    writeShard(key, { records: recs, tombs: {} });
+    writeShard(key, { records: recs, tombs: {} }, meta.seq);
     newShards[key] = meta.seq;
   }
   if (cfgJson) {
@@ -661,15 +690,77 @@ function setMeta(m) { props().setProperty('META', JSON.stringify(m)); }
 function shardName(k) { return k === 'core' ? 'core.json' : 'act-' + k + '.json'; }
 function shardFile(k, create) { return fileByName(shardName(k), create); }
 
-function readShard(k) {
-  const f = shardFile(k, false);
-  if (!f) return { records: {}, tombs: {} };
-  const d = JSON.parse(f.getBlob().getDataAsString() || '{}');
+/** Read a shard; with its revision, served from the in-memory cache when possible (much faster than Drive). */
+function readShard(k, rev) {
+  let raw = rev ? bigGet('sh:' + k + ':' + rev) : null;
+  if (raw == null) {
+    const f = shardFile(k, false);
+    raw = f ? f.getBlob().getDataAsString() : '';
+    if (rev && raw) bigPut('sh:' + k + ':' + rev, raw, 3600);
+  }
+  const d = JSON.parse(raw || '{}');
   if (!d.records) d.records = {};
   if (!d.tombs) d.tombs = {};
   return d;
 }
-function writeShard(k, data) { upsert(shardName(k), JSON.stringify(data)); }
+function writeShard(k, data, rev) {
+  const raw = JSON.stringify(data);
+  upsert(shardName(k), raw);
+  if (rev) bigPut('sh:' + k + ':' + rev, raw, 3600);
+}
+
+/*
+ * Journal: the most recent changed records, kept in cache and keyed by sequence number.
+ * A sync whose "since" is inside the journal is answered from memory without reading Drive.
+ * If the cache is evicted, syncs simply fall back to reading the shards.
+ */
+const JOURNAL_MAX = 5000;
+
+function journalGet(seq) {
+  const raw = bigGet('jr:' + seq);
+  return raw ? JSON.parse(raw) : null;
+}
+
+function journalAdd(prevSeq, seq, recs) {
+  let j = journalGet(prevSeq);
+  if (!j) j = { floor: prevSeq, recs: [] };
+  const ids = {};
+  recs.forEach(function (r) { ids[r.id] = 1; });
+  j.recs = j.recs.filter(function (r) { return !ids[r.id]; }).concat(recs.sort(function (x, y) { return x.rev - y.rev; }));
+  while (j.recs.length > JOURNAL_MAX) { const d = j.recs.shift(); j.floor = Math.max(j.floor, d.rev); }
+  j.seq = seq;
+  const s = JSON.stringify(j);
+  bigPut('jr:' + seq, s.length < 6000000 ? s : JSON.stringify({ floor: seq, recs: [], seq: seq }), 1800);
+}
+
+/** Cache a large string: gzip + base64, split into chunks under the 100 KB per-key limit. */
+function bigPut(key, str, ttl) {
+  try {
+    const z = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(str, 'application/json')).getBytes());
+    const size = 95000;
+    const n = Math.ceil(z.length / size);
+    if (n > 60) return;
+    const o = {};
+    for (let i = 0; i < n; i++) o[key + ':' + i] = z.slice(i * size, (i + 1) * size);
+    cache().putAll(o, ttl);
+    cache().put(key + ':n', String(n), ttl); // written last, so a reader never sees a half-written value
+  } catch (err) { console.error(err); }
+}
+
+function bigGet(key) {
+  try {
+    const n = Number(cache().get(key + ':n') || 0);
+    if (!n) return null;
+    const keys = [];
+    for (let i = 0; i < n; i++) keys.push(key + ':' + i);
+    const got = cache().getAll(keys);
+    let z = '';
+    for (let i = 0; i < n; i++) { if (got[keys[i]] == null) return null; z += got[keys[i]]; }
+    return Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(z), 'application/x-gzip')).getDataAsString();
+  } catch (err) {
+    return null;
+  }
+}
 
 function loadConfig(fresh) {
   if (!fresh) {

@@ -18,7 +18,11 @@ type SyncState = 'idle' | 'syncing' | 'offline' | 'error';
 const LS_SESSION = 'ks-session';
 const LS_DEVICE = 'ks-device';
 const LS_UNDO = 'ks-undo';
-const POLL_MS = 20000;
+/** Poll fast while someone is working, slower when idle, rarely when the tab is hidden. */
+const POLL_ACTIVE_MS = 5000;
+const POLL_IDLE_MS = 15000;
+const POLL_HIDDEN_MS = 60000;
+const BATCH = 500;
 
 export function deviceId(): string {
   try {
@@ -81,6 +85,8 @@ class Store {
 
   subscribe(fn: () => void) { this.subs.add(fn); return () => { this.subs.delete(fn); }; }
   emit() { this.version++; this.subs.forEach((f) => f()); }
+  /** Re-render for status only (sync dot) without invalidating cached queues and stats. */
+  quiet() { this.subs.forEach((f) => f()); }
 
   /** Cache a derived value until the next change. */
   sel<T>(key: string, fn: () => T): T {
@@ -145,15 +151,27 @@ class Store {
 
   /* ------------------------------------------------------------ sync */
 
+  private lastInput = Date.now();
+  private lastRemote = 0;
+
+  private pollDelay() {
+    if (document.visibilityState !== 'visible') return POLL_HIDDEN_MS;
+    const t = Date.now();
+    return t - this.lastInput < 3 * 60e3 || t - this.lastRemote < 60e3 ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+  }
+
   private startLoop() {
     clearTimeout(this.timer);
     const tick = () => {
       if (document.visibilityState === 'visible') this.sync();
-      this.timer = setTimeout(tick, POLL_MS);
+      this.timer = setTimeout(tick, this.pollDelay());
     };
-    this.timer = setTimeout(tick, POLL_MS);
+    this.timer = setTimeout(tick, this.pollDelay());
     if (!(this as any)._listeners) {
       (this as any)._listeners = true;
+      const seen = () => { this.lastInput = Date.now(); };
+      window.addEventListener('pointerdown', seen, { passive: true });
+      window.addEventListener('keydown', seen, { passive: true });
       window.addEventListener('focus', () => this.token && this.sync());
       window.addEventListener('online', () => this.token && this.sync());
       document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && this.token && this.sync());
@@ -173,9 +191,10 @@ class Store {
     if (this.syncing) { this.again = true; return; }
     this.syncing = true;
     this.again = false;
-    const ops = this.outbox.slice(0, 150);
+    const ops = this.outbox.slice(0, BATCH);
     this.state = 'syncing';
-    this.emit();
+    this.quiet();
+    let dataChanged = ops.length > 0;
     try {
       const r: SyncResponse & { ok: boolean; error?: string } = await post({
         action: 'sync', token: this.token, since: this.since, epoch: this.epoch, cfgRev: this.cfgRev, ops, focus: this.focus,
@@ -188,10 +207,18 @@ class Store {
       const changed: Rec[] = [];
       const dels: ID[] = [];
       if (r.full) { this.base.clear(); await clearAll(); }
+      const me = this.me?.id;
       for (const c of r.changes) {
         if ((c as Tombstone).deleted) { this.base.delete(c.id); dels.push(c.id); }
-        else { this.base.set(c.id, c as Rec); changed.push(c as Rec); }
+        else {
+          const prev = this.base.get(c.id);
+          if (prev && prev.rev === c.rev) continue;
+          this.base.set(c.id, c as Rec);
+          changed.push(c as Rec);
+          if ((c as Rec).updatedBy !== me) this.lastRemote = Date.now();
+        }
       }
+      if (changed.length || dels.length || r.full) dataChanged = true;
       const sent = new Set(ops.map((o) => o.oid));
       this.outbox = this.outbox.filter((o) => !sent.has(o.oid));
       for (const u of this.undoStack) for (const oid of u.oids) if (r.applied[oid]) u.rev = Math.max(u.rev, r.applied[oid]);
@@ -201,23 +228,28 @@ class Store {
       this.floor = r.floor || 0;
       // Changes sealed by a checkpoint can't be undone any more.
       this.undoStack = this.undoStack.filter((u) => !u.rev || u.rev > this.floor);
-      if (r.settings) this.settings = withDefaults(r.settings);
-      if (r.team) this.team = r.team;
+      if (r.settings) { this.settings = withDefaults(r.settings); dataChanged = true; this.lastRemote = Date.now(); }
+      if (r.team) { this.team = r.team; dataChanged = true; }
       this.cfgRev = r.cfgRev;
-      this.claims = r.claims || {};
-      this.rebuild();
+      const claims = r.claims || {};
+      if (JSON.stringify(claims) !== JSON.stringify(this.claims)) { this.claims = claims; dataChanged = true; }
+      if (dataChanged || !this.ready) this.rebuild();
+      if (!this.ready) dataChanged = true;
       this.ready = true;
       this.state = 'idle';
       this.lastSync = Date.now();
-      await putRecords(changed, dels);
+      if (dataChanged) {
+        await putRecords(changed, dels);
+        await kvSet('outbox', this.outbox);
+        this.saveUndo();
+      }
       await kvSet('meta', { since: this.since, epoch: this.epoch, floor: this.floor, cfgRev: this.cfgRev, settings: this.settings, team: this.team });
-      await kvSet('outbox', this.outbox);
-      this.saveUndo();
     } catch {
       this.state = 'offline';
     } finally {
       this.syncing = false;
-      this.emit();
+      // Only a real data change re-computes queues and charts; a quiet poll just updates the sync dot.
+      if (dataChanged) this.emit(); else this.quiet();
       if (this.again || this.outbox.length) this.soon();
     }
   }
