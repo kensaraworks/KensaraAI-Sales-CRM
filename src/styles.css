@@ -439,3 +439,5 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .hbar__bar { height: 14px; border-radius: 0 4px 4px 0; background: var(--series-1); min-width: 2px; transition: width 0.6s var(--ease); }
 .hbar__v { font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hbar__v small { color: var(--muted); font-weight: 400; margin-left: 4px; }
+.bcard.is-ro { cursor: pointer; opacity: 0.72; }
+.bcard.is-ro:hover { opacity: 1; }

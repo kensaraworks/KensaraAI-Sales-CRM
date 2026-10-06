@@ -4,7 +4,7 @@
  */
 import type { Account, ActionType, Activity, Channel, Contact, ID, Member, NextAction, Settings, StageId, Status } from './types';
 import { OUTCOME } from './outcomes';
-import { Load, TimeModel, addWorkDays, assigneeOf, bestSlot, clampToWork } from './schedule';
+import { Load, TimeModel, addWorkDays, assigneeOf, bestSlot, clampToWork, handlerFor } from './schedule';
 import { DAY, HOUR, MIN, clamp, fmtWhen, parseHM, startOfDay } from './util';
 import { stageIndex } from './defaults';
 
@@ -298,6 +298,8 @@ export function planOutcome(inp: OutcomeInput, ctx: Ctx): Plan {
   if (inp.sentiment != null) heat = clamp(Math.round((heat + inp.sentiment) / 1.5), -2, 3);
 
   Object.assign(acc, { stage, status, heat, attempts, cadence, next });
+  // Moving to another stage hands the lead to whoever works that stage.
+  if (stage !== a.stage) acc.handler = handlerFor(a, stage, ctx.team);
   if (plan.newContact && o.id === 'referred') acc.primaryContactId = '__new__';
   else if (inp.contact && o.connected && !a.primaryContactId) acc.primaryContactId = inp.contact.id;
 

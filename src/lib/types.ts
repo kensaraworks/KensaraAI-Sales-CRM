@@ -52,6 +52,8 @@ export interface Account extends Base {
   status: Status;
   lostReason?: string;
   owner?: ID;
+  /** Who is working the lead right now (admin assignment or stage hand-off). */
+  handler?: ID | null;
   primaryContactId?: ID;
   next?: NextAction | null;
   /** Unanswered attempts in a row on the current contact. */

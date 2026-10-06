@@ -4,10 +4,11 @@
  *
  * Demo sign-in: any name + PIN 1234. Admin passphrase: kensara-admin
  */
-import type { AuditRow, Member, Op, Rec, Settings, Tombstone } from './types';
+import type { Account, AuditRow, Member, Op, Rec, Settings, Tombstone } from './types';
 import { DEFAULT_SETTINGS } from './defaults';
 import { rand } from './util';
 import { seedDemo } from './seed';
+import { canEdit, HANDOFF_GRACE_MS } from './schedule';
 
 interface Session { user: string; x: boolean; device: string; label: string; at: string; seen: number }
 interface DB {
@@ -77,6 +78,22 @@ function clean(v: any, depth = 0): any {
 
 const short = (v: any) => { const s = v === undefined ? null : JSON.stringify(v); return s && s.length > 300 ? `${s.slice(0, 300)}…` : v ?? null; };
 
+/** Same rules as the server: only the admin assigns; others change only the leads they work. */
+function permitted(db: DB, op: Op, cur: Rec | undefined, user: string): boolean {
+  const data: any = op.t === 'put' ? op.data : op.t === 'set' ? op.set : {};
+  if (op.kind === 'account' && data && 'owner' in data) return false;
+  if (op.kind === 'account' && data && data.handler != null && (cur as Account | undefined)?.handler !== data.handler) {
+    const stage = 'stage' in data ? data.stage : (cur as Account | undefined)?.stage;
+    const m = db.team.find((t) => t.id === data.handler && t.active);
+    if (!m || !(m.stages || []).includes(stage)) return false;
+  }
+  if (cur && cur.createdBy === user && Date.now() - Date.parse(cur.createdAt) < HANDOFF_GRACE_MS) return true;
+  const accId = op.kind === 'account' ? op.id : ((cur as any)?.accountId ?? data?.accountId);
+  const acc = db.records[accId] as Account | undefined;
+  if (!acc) return true;
+  return canEdit(acc, db.team, user, false);
+}
+
 function applyOps(db: DB, ops: Op[], user: string, x: boolean) {
   const applied: Record<string, number> = {};
   const rejected: { oid: string; error: string }[] = [];
@@ -99,6 +116,7 @@ function applyOps(db: DB, ops: Op[], user: string, x: boolean) {
       continue;
     }
     if (db.tombs[op.id]) { rejected.push({ oid: op.oid, error: 'deleted' }); continue; }
+    if (!x && !permitted(db, op, cur, user)) { rejected.push({ oid: op.oid, error: 'forbidden' }); continue; }
     if (op.t === 'put' && !cur) {
       const data = clean(op.data) || {};
       for (const k of PROTECTED) delete data[k];

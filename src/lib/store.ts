@@ -77,6 +77,8 @@ class Store {
   ready = false;
   undoStack: UndoEntry[] = [];
   version = 0;
+  /** Shows a message to the user (wired to the toast in the UI). */
+  onNotice?: (msg: string) => void;
   private subs = new Set<() => void>();
   private memo = new Map<string, { v: number; val: any }>();
   private syncing = false;
@@ -222,7 +224,10 @@ class Store {
       const sent = new Set(ops.map((o) => o.oid));
       this.outbox = this.outbox.filter((o) => !sent.has(o.oid));
       for (const u of this.undoStack) for (const oid of u.oids) if (r.applied[oid]) u.rev = Math.max(u.rev, r.applied[oid]);
-      if (r.rejected?.length) console.warn('rejected ops', r.rejected);
+      if (r.rejected?.length) {
+        console.warn('rejected ops', r.rejected);
+        if (r.rejected.some((x) => x.error === 'forbidden')) this.onNotice?.("Some changes weren't saved — that lead isn't assigned to you");
+      }
       this.since = r.seq;
       this.epoch = r.epoch;
       this.floor = r.floor || 0;

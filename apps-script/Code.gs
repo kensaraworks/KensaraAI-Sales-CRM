@@ -217,6 +217,7 @@ function applyOps(ops, a) {
   const dirty = {};
   const touched = {};
   const purged = [];
+  const team = loadConfig().team;
   const applied = {};
   const rejected = [];
   const audit = [];
@@ -268,6 +269,7 @@ function applyOps(ops, a) {
     }
 
     if (shard.tombs[op.id]) { rejected.push({ oid: op.oid, error: 'deleted' }); continue; }
+    if (!a.x && !permitted(op, cur, a.id, get('core').records, team)) { rejected.push({ oid: op.oid, error: 'forbidden' }); continue; }
 
     if (op.t === 'put' && !cur) {
       const data = clean(op.data) || {};
@@ -315,6 +317,52 @@ function applyOps(ops, a) {
   if (audit.length) { try { writeAudit(audit); } catch (err) { console.error(err); } }
   if (purged.length) { try { purgeAudit(purged); } catch (err) { console.error(err); } }
   return { applied: applied, rejected: rejected };
+}
+
+/* ---- who may change what (mirrors canEdit / assigneeOf in src/lib/schedule.ts — keep identical) */
+
+const HANDOFF_GRACE_MS = 30 * 60e3;
+
+function hashNum(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+function assigneeOf(acc, team) {
+  if (acc.next && acc.next.assignee) return acc.next.assignee;
+  const active = team.filter(function (m) { return m.active; });
+  if (acc.handler && active.some(function (m) { return m.id === acc.handler; })) return acc.handler;
+  const workers = active.filter(function (m) { return (m.stages || []).indexOf(acc.stage) >= 0; });
+  const owner = acc.owner ? active.filter(function (m) { return m.id === acc.owner; })[0] : null;
+  if (owner && (!workers.length || !(owner.stages || []).length || workers.indexOf(owner) >= 0)) return owner.id;
+  if (workers.length) return workers[hashNum(acc.id) % workers.length].id;
+  return null;
+}
+
+function canEdit(acc, team, me) {
+  const who = assigneeOf(acc, team);
+  if (who === me) return true;
+  if (who === null && acc.createdBy === me) return true;
+  return acc.updatedBy === me && Date.now() - Date.parse(acc.updatedAt) < HANDOFF_GRACE_MS;
+}
+
+/** Team members (not the admin): never assign; only change the leads they work. */
+function permitted(op, cur, me, core, team) {
+  const data = op.t === 'put' ? op.data : op.t === 'set' ? op.set : {};
+  const has = function (k) { return data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, k); };
+  if (op.kind === 'account' && has('owner')) return false;
+  // A stage hand-off may only go to someone who works the new stage (no self-assigning).
+  if (op.kind === 'account' && has('handler') && data.handler != null && !(cur && cur.handler === data.handler)) {
+    const stage = has('stage') ? data.stage : cur && cur.stage;
+    const m = team.filter(function (t) { return t.id === data.handler && t.active; })[0];
+    if (!m || (m.stages || []).indexOf(stage) < 0) return false;
+  }
+  if (cur && cur.createdBy === me && Date.now() - Date.parse(cur.createdAt) < HANDOFF_GRACE_MS) return true;
+  const accId = op.kind === 'account' ? op.id : ((cur && cur.accountId) || (data && data.accountId));
+  const acc = accId ? core[accId] : null;
+  if (!acc) return true;
+  return canEdit(acc, team, me);
 }
 
 function clean(v, depth) {

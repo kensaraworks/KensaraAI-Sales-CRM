@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { Account, ID } from '../lib/types';
 import { useStore } from '../lib/store';
+import { assignTo, canEdit } from '../lib/schedule';
 import { FIELDS, autoMap, buildLeads, findHeaderRow, hasPhone, markDuplicates, readFile, type FieldId, type Lead } from '../lib/importer';
 import { aiMapColumns } from '../lib/ai';
 import { queueEnrich } from '../lib/enrichQueue';
@@ -25,7 +26,7 @@ export function Import() {
   const [assign, setAssign] = useState<string>('auto');
   const [source, setSource] = useState('');
   const [paste, setPaste] = useState('');
-  const [result, setResult] = useState<{ created: number; merged: number; noPhone: ID[] } | null>(null);
+  const [result, setResult] = useState<{ created: number; merged: number; noPhone: ID[]; othersSkipped: number } | null>(null);
 
   const sheet = sheets[sheetIdx];
   const headers = sheet ? sheet.rows[headerRow].map((h, i) => String(h).trim() || `Column ${i + 1}`) : [];
@@ -86,7 +87,7 @@ export function Import() {
 
   const run = () => {
     const parts: Parameters<typeof s.batch>[1] = [];
-    let created = 0, merged = 0;
+    let created = 0, merged = 0, othersSkipped = 0;
     const noPhone: ID[] = [];
     let rr = 0;
     const ownerFor = () => assign === 'auto' ? undefined : assign === 'rr' ? (intro.length ? intro[rr++ % intro.length].id : undefined) : assign;
@@ -95,6 +96,7 @@ export function Import() {
         if (dupMode === 'skip') continue;
         const a = s.get<Account>(l.dupOf);
         if (!a) continue;
+        if (!canEdit(a, s.team, s.me!.id, s.isX)) { othersSkipped++; continue; }
         const existing = s.contactsBy().get(a.id) || [];
         parts.push({ rec: a, set: {
           phones: uniq([...a.phones, ...l.phones.filter((p) => !(a.badPhones || []).includes(p))]), emails: uniq([...a.emails, ...l.emails]),
@@ -118,7 +120,7 @@ export function Import() {
       parts.push({ kind: 'account', id, create: {
         name: l.name, city: l.city, state: l.state, sector: l.sector, website: l.website, linkedin: l.linkedin, address: l.address, size: l.size,
         phones: l.phones, emails: l.emails, extra, stage: 'new', status: 'open', attempts: 0, cadence: 0, heat: 0, tags: [], source: source || fileName,
-        owner: ownerFor(), primaryContactId: cids[0], next: null,
+        ...(s.isX ? assignTo(ownerFor() ?? null) : {}), primaryContactId: cids[0], next: null,
       } });
       l.contacts.forEach((c, i) => parts.push({ kind: 'contact', id: cids[i], create: { accountId: id, name: c.name, designation: c.designation || '', phones: c.phones, emails: c.emails, role: 'unknown', status: 'active' } }));
       if (!hasPhone(l)) noPhone.push(id);
@@ -126,7 +128,7 @@ export function Import() {
     }
     if (!parts.length) { toast('Nothing new to import'); return; }
     s.batch(`Imported ${created} leads`, parts);
-    setResult({ created, merged, noPhone });
+    setResult({ created, merged, noPhone, othersSkipped });
     setStep('done');
     toast(`Imported ${plural(created, 'lead')}${merged ? `, updated ${merged}` : ''}`, { undo: true });
   };
@@ -138,7 +140,8 @@ export function Import() {
         <div class="card card--pad col" style={{ gap: '14px', maxWidth: '640px' }}>
           <div style={{ fontSize: '40px' }}>✅</div>
           <h2>{plural(result.created, 'new lead')} added{result.merged ? ` · ${plural(result.merged, 'existing lead')} updated` : ''}</h2>
-          <p class="muted">They're now in everyone's queues, routed by stage. New outreach is paced automatically so follow-ups never pile up.</p>
+          <p class="muted">{s.isX ? "They're now in the team's queues, routed by owner and stage. New outreach is paced automatically so follow-ups never pile up." : 'Your team lead will assign them; they show up in the right queues once assigned.'}</p>
+          {result.othersSkipped > 0 && <p class="small muted">{plural(result.othersSkipped, 'company was', 'companies were')} already being worked by someone else and left unchanged.</p>}
           {result.noPhone.length > 0 && (
             <div class="banner banner--accent" style={{ margin: 0 }}>
               <Icon n="phone" />
@@ -199,13 +202,13 @@ export function Import() {
           </div>
           {dups > 0 && <div class="row wrap"><span class="small">Companies already in the CRM:</span><Seg value={dupMode} options={[['merge', 'Add new details to them'], ['skip', 'Skip them']]} onChange={setDupMode} /></div>}
           <div class="grid2">
-            <label class="field"><span>Assign to</span>
+            {s.isX ? <label class="field"><span>Assign to</span>
               <select class="select" value={assign} onChange={(e) => setAssign((e.target as HTMLSelectElement).value)}>
                 <option value="auto">Automatically by stage</option>
                 {intro.length > 1 && <option value="rr">Share equally between callers ({intro.map((m) => m.name).join(', ')})</option>}
                 {s.team.filter((m) => m.active).map((m) => <option value={m.id}>{m.name}</option>)}
               </select>
-            </label>
+            </label> : <p class="small muted" style={{ alignSelf: 'end' }}>New leads go to your team lead to assign.</p>}
             <label class="field"><span>Source label</span><input class="input" value={source} onInput={(e) => setSource((e.target as HTMLInputElement).value)} /></label>
           </div>
           <div class="row">

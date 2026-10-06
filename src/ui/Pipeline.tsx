@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import type { Account, StageId } from '../lib/types';
 import { useStore } from '../lib/store';
 import { STAGES, stageLabel } from '../lib/defaults';
-import { assigneeOf, actionLabel } from '../lib/schedule';
+import { assigneeOf, actionLabel, canEdit, stageMove } from '../lib/schedule';
 import { fmtWhen, norm } from '../lib/util';
 import { Avatar, Heat, Icon, Seg } from './components';
 import { openAccount, toast } from './bus';
@@ -23,8 +23,13 @@ export function Pipeline() {
   const move = (id: string, st: StageId) => {
     const a = s.get<Account>(id);
     if (!a || a.stage === st) return;
+    if (!canEdit(a, s.team, me, s.isX)) {
+      const w = assigneeOf(a, s.team);
+      toast(w ? `${a.name} is ${s.nameOf(w)}'s lead — you can view it, not move it` : `${a.name} isn't assigned to you yet`);
+      return;
+    }
     s.batch(`Moved ${a.name} to ${stageLabel(st)}`, [
-      { rec: a, set: { stage: st, status: st === 'assessment' ? 'won' : a.status === 'won' ? 'open' : a.status, ...(st !== 'new' && !a.next ? { next: { type: 'call', due: new Date().toISOString() } } : {}) } },
+      { rec: a, set: { ...stageMove(a, st, s.team), status: st === 'assessment' ? 'won' : a.status === 'won' ? 'open' : a.status, ...(st !== 'new' && !a.next ? { next: { type: 'call', due: new Date().toISOString() } } : {}) } },
       { kind: 'activity', create: { accountId: a.id, channel: 'note', at: new Date().toISOString(), stageFrom: a.stage, stageTo: st, system: true, note: `Moved to ${stageLabel(st)}` } },
     ]);
     toast(`${a.name} → ${stageLabel(st)}`, { undo: true });
@@ -53,8 +58,9 @@ export function Pipeline() {
                   const c = (contacts.get(a.id) || []).find((x) => x.id === a.primaryContactId) || contacts.get(a.id)?.[0];
                   const who = assigneeOf(a, s.team);
                   const late = a.next && new Date(a.next.due).getTime() < Date.now();
+                  const mine = canEdit(a, s.team, me, s.isX);
                   return (
-                    <div class={`bcard ${drag === a.id ? 'is-drag' : ''}`} draggable onDragStart={(e) => { e.dataTransfer?.setData('text/plain', a.id); setDrag(a.id); }} onDragEnd={() => setDrag(null)} onClick={() => openAccount(a.id)}>
+                    <div class={`bcard ${drag === a.id ? 'is-drag' : ''} ${mine ? '' : 'is-ro'}`} draggable={mine} title={mine ? undefined : who ? `${s.nameOf(who)}'s lead — view only` : 'Not assigned yet — view only'} onDragStart={(e) => { e.dataTransfer?.setData('text/plain', a.id); setDrag(a.id); }} onDragEnd={() => setDrag(null)} onClick={() => openAccount(a.id)}>
                       <div class="row"><span class="bcard__name ellipsis grow">{a.name}</span><Heat v={a.heat} /></div>
                       <div class="tiny muted ellipsis">{c ? `${c.name}${c.designation ? ` · ${c.designation}` : ''}` : a.city || '—'}</div>
                       <div class="row" style={{ marginTop: '6px' }}>

@@ -125,19 +125,63 @@ export function bestSlot(
 
 /* ------------------------------------------------------------------ routing */
 
-/** Who should do this account's next step: explicit assignee → stage allocation → owner → anyone (null). */
+/**
+ * Who works this lead right now. Everything here is set by the admin:
+ *   1. a specific person for the next step (e.g. the expert hosting a discovery call)
+ *   2. the lead's owner — unless the lead moved to a stage the owner doesn't work and someone else does (hand-off)
+ *   3. whoever is allocated to the lead's current stage (shared evenly if several)
+ *   4. nobody (null) — unassigned, waiting for the admin
+ * Mirrored in apps-script/Code.gs (keep the two identical — the server enforces it).
+ */
 export function assigneeOf(a: Account, team: Member[]): ID | null {
   if (a.next?.assignee) return a.next.assignee;
-  const workers = team.filter((m) => m.active && m.stages?.includes(a.stage));
-  if (!workers.length) return a.owner || null;
-  if (a.owner && workers.some((w) => w.id === a.owner)) return a.owner;
+  const active = team.filter((m) => m.active);
+  // Explicit "working it now": set when the admin assigns, or by a stage hand-off.
+  if (a.handler && active.some((m) => m.id === a.handler)) return a.handler;
+  const workers = active.filter((m) => (m.stages || []).includes(a.stage));
+  const owner = a.owner ? active.find((m) => m.id === a.owner) : undefined;
+  if (owner && (!workers.length || !(owner.stages || []).length || workers.includes(owner))) return owner.id;
+  if (workers.length) return workers[hashNum(a.id) % workers.length].id;
+  return null;
+}
+
+/**
+ * Who should handle a lead after it moves to `stage`: keep the current handler if they work that stage
+ * (or work every stage); otherwise hand off to whoever is allocated to it. null = fall back to owner/stage routing.
+ */
+export function handlerFor(a: Account, stage: StageId, team: Member[]): ID | null {
+  const active = team.filter((m) => m.active);
+  const workers = active.filter((m) => (m.stages || []).includes(stage));
+  const cur = a.handler ? active.find((m) => m.id === a.handler) : undefined;
+  if (cur && (!(cur.stages || []).length || workers.includes(cur))) return cur.id;
+  if (!workers.length) return null;
+  const owner = a.owner ? active.find((m) => m.id === a.owner) : undefined;
+  if (owner && (!(owner.stages || []).length || workers.includes(owner))) return null;
   return workers[hashNum(a.id) % workers.length].id;
 }
 
-export const isMine = (a: Account, team: Member[], me: ID) => {
+/** Fields to write when a lead changes stage (keeps hand-offs consistent everywhere). */
+export const stageMove = (a: Account, stage: StageId, team: Member[]) => ({ stage, handler: handlerFor(a, stage, team) });
+
+/** Fields to write when the admin assigns a lead to someone (or back to automatic with null). */
+export const assignTo = (who: ID | null) => ({ owner: who, handler: who });
+
+export const isMine = (a: Account, team: Member[], me: ID) => assigneeOf(a, team) === me;
+
+/** Grace window in which you can still change (or undo) a lead you just handed off. */
+export const HANDOFF_GRACE_MS = 30 * 60e3;
+
+/**
+ * May this person change this lead? The admin: always. Others: their own leads, unassigned leads they
+ * added themselves, and leads they changed in the last 30 minutes (so a hand-off can still be undone).
+ */
+export function canEdit(a: Account, team: Member[], me: ID, admin: boolean, now = Date.now()): boolean {
+  if (admin) return true;
   const who = assigneeOf(a, team);
-  return who === null || who === me;
-};
+  if (who === me) return true;
+  if (who === null && a.createdBy === me) return true;
+  return a.updatedBy === me && now - Date.parse(a.updatedAt) < HANDOFF_GRACE_MS;
+}
 
 /* ------------------------------------------------------------------ the daily queue */
 
@@ -164,6 +208,8 @@ export interface Queue {
   newTarget: number;
   newDone: number;
   throttle: number;
+  /** Open leads nobody is assigned to (shown to the admin). */
+  unassigned: number;
 }
 
 const STAGE_W: Record<StageId, number> = { new: 4, intro: 10, shared: 24, engaged: 38, discovery: 48, assessment: 16 };
@@ -194,13 +240,15 @@ export function buildQueue(q: QueueInput): Queue {
   const now = q.now ?? new Date();
   const t0 = startOfDay(now).getTime();
   const tEnd = t0 + DAY;
-  const out: Queue = { now: [], due: [], later: [], fresh: [], number: [], upcoming: [], backlog: 0, newQuota: 0, newTarget: 0, newDone: 0, throttle: 1 };
+  const out: Queue = { now: [], due: [], later: [], fresh: [], number: [], upcoming: [], backlog: 0, newQuota: 0, newTarget: 0, newDone: 0, throttle: 1, unassigned: 0 };
   const rateNow = q.model.rate[now.getDay()][now.getHours()];
   const lookalike = sectorStats(q.accounts);
 
   for (const a of q.accounts) {
     if (a.voided || a.status === 'won' || a.status === 'lost') continue;
-    if (!q.everyone && !isMine(a, q.team, q.me)) continue;
+    const who = assigneeOf(a, q.team);
+    if (who === null) out.unassigned++;
+    if (!q.everyone && who !== q.me) continue;
     const cs = q.contacts.get(a.id) || [];
     const contact = (a.next?.contactId && cs.find((c) => c.id === a.next!.contactId)) || cs.find((c) => c.id === a.primaryContactId) || cs[0];
     const hasPhone = !!(contact?.phones.length || a.phones.length);

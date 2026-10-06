@@ -32,7 +32,7 @@ export function App() {
   const s = useStore();
   const u = useUI();
   const [booted, setBooted] = useState(false);
-  useEffect(() => { store.boot().then(() => setBooted(true)); }, []);
+  useEffect(() => { store.onNotice = (m) => toast(m, { ms: 5000 }); store.boot().then(() => setBooted(true)); }, []);
   // Elevated sessions load their extras (incl. the Ctrl+S checkpoint shortcut) in the background.
   useEffect(() => { if (s.isX) import('../ops/Control'); }, [s.isX]);
 

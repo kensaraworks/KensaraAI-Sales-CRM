@@ -9,8 +9,10 @@ import { openAccount, openCompose, openLog, set } from './bus';
 
 export function useQueue(everyone = false): Queue {
   const s = store;
-  return s.sel(`queue:${everyone}`, () => buildQueue({
-    accounts: s.accounts(), contacts: s.contactsBy(), acts: s.acts(), settings: s.settings, team: s.team, me: s.me!.id, model: s.model(), everyone,
+  // Signed out mid-render (session revoked): an empty queue until the sign-in screen takes over.
+  const me = s.me?.id || '';
+  return s.sel(`queue:${everyone}:${me}`, () => buildQueue({
+    accounts: me ? s.accounts() : [], contacts: s.contactsBy(), acts: s.acts(), settings: s.settings, team: s.team, me, model: s.model(), everyone,
   }));
 }
 
@@ -18,7 +20,8 @@ export function Today() {
   const s = useStore();
   const [scope, setScope] = useState<'me' | 'team'>('me');
   const q = useQueue(scope === 'team');
-  const me = s.me!;
+  if (!s.me) return null;
+  const me = s.me;
   const acts = s.acts();
   // People who don't work the opening stages never get fresh leads, so skip that ring and banner for them.
   const mine = s.member(me.id);
@@ -65,6 +68,14 @@ export function Today() {
         </div>
       )}
 
+      {s.isX && q.unassigned > 0 && (
+        <div class="banner banner--accent" style={{ marginTop: '14px', marginBottom: 0 }}>
+          <Icon n="user" />
+          <div class="small grow"><b>{plural(q.unassigned, "lead isn't", "leads aren't")} assigned to anyone</b> — nobody will call {q.unassigned === 1 ? 'it' : 'them'} until you assign {q.unassigned === 1 ? 'it' : 'them'} or allocate stages in Settings → Team.</div>
+          <button class="btn btn--sm" onClick={() => set({ route: 'leads' })}>Assign in Leads</button>
+        </div>
+      )}
+
       {q.throttle < 1 && scope === 'me' && getsFresh && (
         <div class="banner" style={{ marginTop: '14px', marginBottom: 0 }}>
           <Icon n="clock" />
@@ -94,7 +105,7 @@ export function Today() {
       {!total && !q.fresh.length && !q.number.length && (
         <div class="card empty" style={{ marginTop: '24px' }}>
           <b>Nothing in your queue</b>
-          {s.accounts().length ? 'New leads and follow-ups assigned to you will appear here.' : 'Import a lead list to get started.'}
+          {s.accounts().length ? (s.isX ? "Nothing is assigned to you. Use the Team switch above to see everyone's queue." : 'Leads assigned to you will appear here.') : 'Import a lead list to get started.'}
           {!s.accounts().length && <div style={{ marginTop: '12px' }}><button class="btn btn--primary" onClick={() => set({ route: 'import' })}><Icon n="import" /> Import leads</button></div>}
         </div>
       )}

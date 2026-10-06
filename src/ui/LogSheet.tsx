@@ -245,7 +245,7 @@ export function LogForm({ account: a, preset, onSaved, compact }: Props) {
         </label>
       )}
 
-      {needs.has('expert') && s.team.length > 0 && (
+      {needs.has('expert') && s.isX && s.team.length > 0 && (
         <label class="field"><span>Hosted by</span>
           <select class="select" value={expert} onChange={(e) => setExpert((e.target as HTMLSelectElement).value)}>
             {s.team.filter((m) => m.active).map((m) => <option value={m.id}>{m.name}</option>)}

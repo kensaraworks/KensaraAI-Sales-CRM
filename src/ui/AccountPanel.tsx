@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'preact/hooks';
+import { createContext } from 'preact';
+import { useContext, useEffect, useState } from 'preact/hooks';
 import type { Account, Activity, AuditRow, Contact, ContactRole, StageId } from '../lib/types';
 import { store, useStore } from '../lib/store';
 import { OUTCOME } from '../lib/outcomes';
 import { STAGES, stageLabel } from '../lib/defaults';
 import { describeNext } from '../lib/workflow';
-import { assigneeOf, actionLabel } from '../lib/schedule';
+import { assigneeOf, actionLabel, assignTo, canEdit, stageMove } from '../lib/schedule';
+
+/** True when the viewer may only look at this lead (it's someone else's). */
+const ReadOnly = createContext(false);
 import { brief, enrich, googleSearchUrl } from '../lib/ai';
 import { post } from '../lib/api';
 import { fmtWhen, rel, uniq } from '../lib/util';
@@ -49,12 +53,13 @@ function Panel({ a }: { a: Account }) {
   const phone = target?.phones[0] || a.phones[0] || contacts.find((c) => c.phones.length)?.phones[0];
   const claim = s.claims[a.id];
   const who = assigneeOf(a, s.team);
+  const editable = canEdit(a, s.team, s.me!.id, s.isX);
   const late = a.next && new Date(a.next.due).getTime() < Date.now() - 30 * 60e3;
 
   const setStage = (st: StageId) => {
     if (st === a.stage) return;
     s.batch(`Moved to ${stageLabel(st)}`, [
-      { rec: a, set: { stage: st, status: st === 'assessment' ? 'won' : a.status === 'won' ? 'open' : a.status } },
+      { rec: a, set: { ...stageMove(a, st, s.team), status: st === 'assessment' ? 'won' : a.status === 'won' ? 'open' : a.status } },
       { kind: 'activity', create: { accountId: a.id, channel: 'note', at: new Date().toISOString(), stageFrom: a.stage, stageTo: st, system: true, note: `Moved to ${stageLabel(st)}` } },
     ]);
     toast(`Moved to ${stageLabel(st)}`, { undo: true });
@@ -65,7 +70,7 @@ function Panel({ a }: { a: Account }) {
       <div class="drawer__head">
         <div class="acct-title">
           <div class="grow">
-            <Editable value={a.name} onSave={(v) => v.trim() && s.update(a, { name: v.trim() }, 'Renamed')} big />
+            <Editable value={a.name} onSave={(v) => v.trim() && s.update(a, { name: v.trim() }, 'Renamed')} big ro={!editable} />
             <div class="row wrap small muted" style={{ marginTop: '4px' }}>
               <Stage s={a.stage} />
               {a.status !== 'open' && <span class={`chip ${a.status === 'won' ? 'chip--good' : a.status === 'lost' ? 'chip--bad' : 'chip--warn'}`}>{a.status === 'parked' ? 'Parked' : a.status === 'won' ? 'Won' : 'Closed'}</span>}
@@ -75,8 +80,8 @@ function Panel({ a }: { a: Account }) {
             </div>
           </div>
           <div style={{ position: 'relative' }}>
-            <button class="btn btn--ghost btn--icon" onClick={() => setMenu(!menu)} aria-label="More"><Icon n="more" /></button>
-            {menu && <Menu a={a} onClose={() => setMenu(false)} setStage={setStage} />}
+            {editable && <button class="btn btn--ghost btn--icon" onClick={() => setMenu(!menu)} aria-label="More"><Icon n="more" /></button>}
+            {editable && menu && <Menu a={a} onClose={() => setMenu(false)} setStage={setStage} />}
           </div>
           <button class="btn btn--ghost btn--icon" onClick={() => openAccount(null)} aria-label="Close"><Icon n="x" /></button>
         </div>
@@ -93,13 +98,20 @@ function Panel({ a }: { a: Account }) {
           </div>
         )}
 
-        <div class="acct-actions">
+        {!editable && (
+          <div class="banner" style={{ margin: '12px 0 0' }}>
+            <Icon n="user" />
+            <span class="small grow">{who ? <><b>{s.nameOf(who)}</b> is working this lead</> : <>Not assigned to anyone yet</>} — view only.</span>
+          </div>
+        )}
+
+        {editable && <div class="acct-actions">
           {phone ? <a class="btn btn--primary" href={telHref(phone)} onClick={() => setTimeout(() => openLog(a.id, { contactId: target?.id }), 600)}><Icon n="phone" /> Call</a>
             : <button class="btn btn--primary" onClick={() => setTab('overview')}><Icon n="search" /> Find number</button>}
           <button class="btn" onClick={() => openLog(a.id, { contactId: target?.id })}><Icon n="check" /> Log</button>
           <button class="btn btn--wa" onClick={() => openCompose(a.id, undefined, 'whatsapp')}><Icon n="whatsapp" /> WhatsApp</button>
           <button class="btn" onClick={() => openCompose(a.id, undefined, 'email')}><Icon n="mail" /> Email</button>
-        </div>
+        </div>}
 
         <div class="tabs" style={{ marginTop: '14px', marginBottom: '-15px' }}>
           {(['overview', 'timeline', 'trail'] as const).map((t) => (
@@ -110,7 +122,7 @@ function Panel({ a }: { a: Account }) {
         </div>
       </div>
       <div class="drawer__body">
-        {tab === 'overview' && <Overview a={a} contacts={contacts} acts={acts} />}
+        {tab === 'overview' && <ReadOnly.Provider value={!editable}><Overview a={a} contacts={contacts} acts={acts} /></ReadOnly.Provider>}
         {tab === 'timeline' && <Timeline acts={acts} contacts={contacts} />}
         {tab === 'trail' && <Trail a={a} contacts={contacts} />}
       </div>
@@ -135,11 +147,13 @@ function Menu({ a, onClose, setStage }: { a: Account; onClose: () => void; setSt
         </button>
       ))}
       <div class="divider" style={{ margin: '6px 0' }} />
+      {s.isX && <>
       <div class="tiny muted" style={{ padding: '6px 8px' }}>Owner</div>
-      <select class="select" style={{ height: '32px', margin: '0 4px 6px', width: 'calc(100% - 8px)' }} value={a.owner || ''} onChange={(e) => { s.update(a, { owner: (e.target as HTMLSelectElement).value || null }, 'Changed owner'); onClose(); }}>
+      <select class="select" style={{ height: '32px', margin: '0 4px 6px', width: 'calc(100% - 8px)' }} value={a.owner || ''} onChange={(e) => { s.update(a, assignTo((e.target as HTMLSelectElement).value || null), 'Changed owner'); onClose(); }}>
         <option value="">Auto (by stage)</option>
         {s.team.filter((m) => m.active).map((m) => <option value={m.id}>{m.name}</option>)}
       </select>
+      </>}
       <div class="divider" style={{ margin: '6px 0' }} />
       {a.status === 'open' || a.status === 'parked' ? (
         <button class="nav__item" style={{ padding: '6px 8px' }} onClick={() => { s.update(a, { status: 'lost', lostReason: 'Removed from pipeline', next: null }, `Closed ${a.name}`); toast('Removed from pipeline', { undo: true }); onClose(); }}>
@@ -165,6 +179,7 @@ function Menu({ a, onClose, setStage }: { a: Account; onClose: () => void; setSt
 
 function Overview({ a, contacts, acts }: { a: Account; contacts: Contact[]; acts: Activity[] }) {
   const s = useStore();
+  const ro = useContext(ReadOnly);
   const [b, setB] = useState<{ text: string; via: string } | null>(a.brief ? { text: a.brief.text, via: 'saved' } : null);
   const [loadingBrief, setLB] = useState(false);
   const [finding, setFinding] = useState(false);
@@ -203,9 +218,9 @@ function Overview({ a, contacts, acts }: { a: Account; contacts: Contact[]; acts
         )}
       </div>
 
-      {a.found && <Found a={a} />}
+      {a.found && !ro && <Found a={a} />}
 
-      {!hasPhone && !a.found && (
+      {!hasPhone && !a.found && !ro && (
         <div class="banner">
           <Icon n="phone" />
           <div class="grow small"><b>No phone number yet.</b> Find the company's public number.</div>
@@ -217,7 +232,7 @@ function Overview({ a, contacts, acts }: { a: Account; contacts: Contact[]; acts
       <section>
         <div class="row" style={{ marginBottom: '4px' }}>
           <h3>People</h3>
-          <button class="btn btn--ghost btn--sm right" onClick={() => setAdding(true)}><Icon n="plus" /> Add person</button>
+          {!ro && <button class="btn btn--ghost btn--sm right" onClick={() => setAdding(true)}><Icon n="plus" /> Add person</button>}
         </div>
         {adding && <PersonForm accountId={a.id} contacts={contacts} onDone={() => setAdding(false)} />}
         <div class="people">
@@ -229,7 +244,7 @@ function Overview({ a, contacts, acts }: { a: Account; contacts: Contact[]; acts
       <section>
         <div class="row" style={{ marginBottom: '8px' }}>
           <h3>Company</h3>
-          {hasPhone && <button class="btn btn--ghost btn--sm right" onClick={find} disabled={finding}>{finding ? <Spinner /> : <Icon n="sparkle" />} Find more contacts</button>}
+          {hasPhone && !ro && <button class="btn btn--ghost btn--sm right" onClick={find} disabled={finding}>{finding ? <Spinner /> : <Icon n="sparkle" />} Find more contacts</button>}
         </div>
         <dl class="kv">
           <dt>Phones</dt><dd><ListEdit values={a.phones} render={(p) => <a href={telHref(p)}>{prettyPhone(p)}</a>} parse={splitPhones} onSave={(v) => s.update(a, { phones: v }, 'Edited phones')} /></dd>
@@ -248,7 +263,7 @@ function Overview({ a, contacts, acts }: { a: Account; contacts: Contact[]; acts
           {a.lostReason && <><dt>Closed because</dt><dd>{a.lostReason}</dd></>}
           <dt>Added</dt><dd class="muted">{fmtWhen(a.createdAt, false)} by {s.nameOf(a.createdBy)} · last change {rel(a.updatedAt)} by {s.nameOf(a.updatedBy)}</dd>
         </dl>
-        <AddField a={a} />
+        {!ro && <AddField a={a} />}
       </section>
     </div>
   );
@@ -285,6 +300,7 @@ function Found({ a }: { a: Account }) {
 const ROLES: [ContactRole, string][] = [['decision-maker', 'Decision maker'], ['influencer', 'Influencer'], ['gatekeeper', 'Gatekeeper'], ['unknown', 'Unknown']];
 
 function Person({ c, a, contacts }: { c: Contact; a: Account; contacts: Contact[] }) {
+  const ro = useContext(ReadOnly);
   const [edit, setEdit] = useState(false);
   const ref = c.referredBy ? contacts.find((x) => x.id === c.referredBy) : undefined;
   if (edit) return <PersonForm accountId={a.id} contacts={contacts} c={c} onDone={() => setEdit(false)} />;
@@ -308,7 +324,7 @@ function Person({ c, a, contacts }: { c: Contact; a: Account; contacts: Contact[
       </div>
       <div class="row" style={{ gap: '2px' }}>
         {c.phones[0] && <a class="btn btn--ghost btn--sm btn--icon" href={telHref(c.phones[0])} onClick={() => setTimeout(() => openLog(a.id, { contactId: c.id }), 600)} title="Call"><Icon n="phone" /></a>}
-        <button class="btn btn--ghost btn--sm btn--icon" onClick={() => setEdit(true)} title="Edit"><Icon n="edit" /></button>
+        {!ro && <button class="btn btn--ghost btn--sm btn--icon" onClick={() => setEdit(true)} title="Edit"><Icon n="edit" /></button>}
       </div>
     </div>
   );
@@ -380,7 +396,8 @@ function AddField({ a }: { a: Account }) {
   );
 }
 
-function Editable({ value, onSave, big, link }: { value: string; onSave: (v: string) => void; big?: boolean; link?: boolean }) {
+function Editable({ value, onSave, big, link, ro: roProp }: { value: string; onSave: (v: string) => void; big?: boolean; link?: boolean; ro?: boolean }) {
+  const ro = useContext(ReadOnly) || !!roProp;
   const [e, setE] = useState(false);
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
@@ -392,15 +409,16 @@ function Editable({ value, onSave, big, link }: { value: string; onSave: (v: str
         onKeyDown={(x) => { if (x.key === 'Enter') (x.target as HTMLInputElement).blur(); if (x.key === 'Escape') { setV(value); setE(false); } }} />
     );
   }
-  if (big) return <h2 style={{ fontSize: '21px', cursor: 'text' }} onClick={() => setE(true)}>{value}</h2>;
+  if (big) return <h2 style={{ fontSize: '21px', cursor: ro ? 'default' : 'text' }} onClick={() => !ro && setE(true)}>{value}</h2>;
   return (
-    <button class="inline-edit" onClick={() => setE(true)}>
+    <button class="inline-edit" disabled={ro} style={ro ? { cursor: 'default', borderColor: 'transparent', background: 'none', color: 'inherit' } : undefined} onClick={() => setE(true)}>
       {value ? (link ? <span class="row"><span class="ellipsis">{value.replace(/^https?:\/\//, '')}</span><a href={normUrl(value)} target="_blank" rel="noopener" onClick={(x) => x.stopPropagation()}><Icon n="link" size={13} /></a></span> : value) : <span class="muted">—</span>}
     </button>
   );
 }
 
 function ListEdit({ values, onSave, parse, render }: { values: string[]; onSave: (v: string[]) => void; parse: (s: string) => string[]; render?: (v: string) => any }) {
+  const ro = useContext(ReadOnly);
   const [e, setE] = useState(false);
   const [v, setV] = useState(values.join(', '));
   useEffect(() => setV(values.join(', ')), [values.join()]);
@@ -408,7 +426,7 @@ function ListEdit({ values, onSave, parse, render }: { values: string[]; onSave:
   return (
     <div class="row wrap" style={{ gap: '8px' }}>
       {values.map((x) => <span>{render ? render(x) : isEmail(x) ? <a href={`mailto:${x}`}>{x}</a> : x}</span>)}
-      <button class="btn btn--ghost btn--sm btn--icon" onClick={() => setE(true)} title="Edit"><Icon n="edit" size={13} /></button>
+      {!ro && <button class="btn btn--ghost btn--sm btn--icon" onClick={() => setE(true)} title="Edit"><Icon n="edit" size={13} /></button>}
       {!values.length && <span class="muted small">—</span>}
     </div>
   );
