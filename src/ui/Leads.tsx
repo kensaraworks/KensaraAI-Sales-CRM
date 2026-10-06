@@ -135,7 +135,10 @@ export function Leads() {
           <button class="btn btn--sm" onClick={() => { const ids = selected.filter((a) => !a.phones.length && !(contacts.get(a.id) || []).some((c) => c.phones.length)).map((a) => a.id); if (!ids.length) { toast('All selected leads already have a number'); return; } queueEnrich(ids); toast(`Finding numbers for ${ids.length} — results appear on each lead`); setSel(new Set()); }}>
             <Icon n="sparkle" /> Find numbers
           </button>
-          <button class="btn btn--sm" onClick={() => bulk('Removed from pipeline', () => ({ status: 'lost', lostReason: 'Removed from pipeline', next: null }))}>Close</button>
+          {selected.some((a) => a.status === 'lost')
+            ? <button class="btn btn--sm" onClick={() => bulk('Reopened', (a) => ({ status: 'open', lostReason: null, next: a.stage === 'new' ? null : { type: 'call', due: new Date().toISOString() } }))}>Reopen</button>
+            : <button class="btn btn--sm" onClick={() => bulk('Removed from pipeline', () => ({ status: 'lost', lostReason: 'Removed from pipeline', next: null }))}>Close</button>}
+          {rows.length > selected.length && <button class="btn btn--sm" onClick={() => setSel(new Set(rows.map((a) => a.id)))}>Select all {rows.length}</button>}
           <button class="btn btn--sm right" onClick={() => setSel(new Set())}>Clear</button>
         </div>
       )}

@@ -100,6 +100,8 @@ export function Import() {
           phones: uniq([...a.phones, ...l.phones.filter((p) => !(a.badPhones || []).includes(p))]), emails: uniq([...a.emails, ...l.emails]),
           city: a.city || l.city, sector: a.sector || l.sector, website: a.website || l.website, state: a.state || l.state, size: a.size || l.size,
           address: a.address || l.address, linkedin: a.linkedin || l.linkedin, extra: { ...l.extra, ...a.extra },
+          // Re-importing a lead that was closed brings it back into the pipeline.
+          ...(a.status === 'lost' ? { status: 'open', lostReason: null, next: a.stage === 'new' ? null : { type: 'call', due: new Date().toISOString() } } : {}),
         } });
         for (const c of l.contacts) {
           const same = existing.find((x) => x.name.toLowerCase() === c.name.toLowerCase());
