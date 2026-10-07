@@ -177,6 +177,7 @@ export const HANDOFF_GRACE_MS = 30 * 60e3;
  */
 export function canEdit(a: Account, team: Member[], me: ID, admin: boolean, now = Date.now()): boolean {
   if (admin) return true;
+  if (team.some((m) => m.id === me && m.active && m.editAll)) return true;
   const who = assigneeOf(a, team);
   if (who === me) return true;
   if (who === null && a.createdBy === me) return true;

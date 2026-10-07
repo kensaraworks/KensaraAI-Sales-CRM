@@ -241,6 +241,7 @@ async function adminOp(db: DB, b: any, me: string): Promise<any> {
         m.name = String(p.name).trim().slice(0, 60);
       }
       if (p.active != null) m.active = !!p.active;
+      if (p.editAll != null) { if (p.editAll) m.editAll = true; else delete m.editAll; }
       if (p.stages) m.stages = p.stages;
       if (p.targets !== undefined) m.targets = p.targets || undefined;
       if (p.color) m.color = p.color;

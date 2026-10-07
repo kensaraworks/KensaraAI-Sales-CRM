@@ -122,6 +122,8 @@ export interface Member {
   stages: StageId[];
   /** Per-person target overrides. */
   targets?: Partial<Record<TargetKey, number>>;
+  /** Set by the admin: may move and edit any lead, not just their own (assigning stays admin-only). */
+  editAll?: boolean;
   color?: string;
 }
 

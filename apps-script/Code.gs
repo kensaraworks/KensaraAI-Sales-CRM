@@ -341,6 +341,7 @@ function assigneeOf(acc, team) {
 }
 
 function canEdit(acc, team, me) {
+  if (team.some(function (m) { return m.id === me && m.active && m.editAll; })) return true;
   const who = assigneeOf(acc, team);
   if (who === me) return true;
   if (who === null && acc.createdBy === me) return true;
@@ -545,6 +546,7 @@ function adminOp(a, b) {
           m.name = nm;
         }
         if (p.active != null) m.active = !!p.active;
+        if (p.editAll != null) { if (p.editAll) m.editAll = true; else delete m.editAll; }
         if (Array.isArray(p.stages)) m.stages = p.stages.filter(function (s) { return /^[a-z]+$/.test(s); }).slice(0, 10);
         if (p.targets !== undefined) { if (p.targets) m.targets = clean(p.targets); else delete m.targets; }
         if (p.color && /^#[0-9a-f]{6}$/i.test(p.color)) m.color = p.color;
