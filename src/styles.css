@@ -441,3 +441,6 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .hbar__v small { color: var(--muted); font-weight: 400; margin-left: 4px; }
 .bcard.is-ro { cursor: pointer; opacity: 0.72; }
 .bcard.is-ro:hover { opacity: 1; }
+/* Tick-box column: press and drag down to select many (touch too — the column doesn't scroll the page). */
+.t td.chk { cursor: pointer; user-select: none; touch-action: none; width: 44px; }
+.t td.chk input { pointer-events: none; }

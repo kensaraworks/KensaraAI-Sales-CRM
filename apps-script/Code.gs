@@ -352,6 +352,14 @@ function canEdit(acc, team, me) {
 function permitted(op, cur, me, core, team) {
   const data = op.t === 'put' ? op.data : op.t === 'set' ? op.set : {};
   const has = function (k) { return data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, k); };
+  // Assignment requests: only "request assigning" people may ask (or withdraw their own ask); the admin approves.
+  if (has('assignReq')) {
+    if (op.kind !== 'account' || op.t !== 'set' || Object.keys(data).length !== 1) return false;
+    const v = data.assignReq;
+    if (v == null) return !!(cur && cur.assignReq && cur.assignReq.by === me);
+    const asker = team.filter(function (t) { return t.id === me && t.active && t.assignAsk; })[0];
+    return !!asker && v.by === me && (v.to === null || team.some(function (t) { return t.id === v.to && t.active; }));
+  }
   if (op.kind === 'account' && has('owner')) return false;
   // A stage hand-off may only go to someone who works the new stage (no self-assigning).
   if (op.kind === 'account' && has('handler') && data.handler != null && !(cur && cur.handler === data.handler)) {
@@ -547,6 +555,7 @@ function adminOp(a, b) {
         }
         if (p.active != null) m.active = !!p.active;
         if (p.editAll != null) { if (p.editAll) m.editAll = true; else delete m.editAll; }
+        if (p.assignAsk != null) { if (p.assignAsk) m.assignAsk = true; else delete m.assignAsk; }
         if (Array.isArray(p.stages)) m.stages = p.stages.filter(function (s) { return /^[a-z]+$/.test(s); }).slice(0, 10);
         if (p.targets !== undefined) { if (p.targets) m.targets = clean(p.targets); else delete m.targets; }
         if (p.color && /^#[0-9a-f]{6}$/i.test(p.color)) m.color = p.color;

@@ -13,6 +13,7 @@ export interface UIState {
   addLead: boolean | { text?: string };
   focus: boolean;
   palette: boolean;
+  requests: boolean;
 }
 
 export interface Toast { id: number; text: string; undo?: boolean; points?: number }
@@ -34,6 +35,7 @@ export const ui: UIState & { toasts: Toast[]; celebrate: number; celebrateBig: b
   addLead: false,
   focus: false,
   palette: false,
+  requests: false,
   toasts: [],
   celebrate: 0,
   celebrateBig: false,

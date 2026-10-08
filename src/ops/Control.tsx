@@ -89,10 +89,10 @@ function Team() {
           <button class="btn btn--sm" onClick={() => setShown(null)}>Done</button>
         </div>
       )}
-      <p class="small muted">Tick the stages each person works. Leads route to whoever works their current stage (several people on one stage share the work evenly), unless you've assigned a lead to someone. Leads in a stage nobody works stay unassigned until you assign them. <b>Edit all leads</b> lets that person move and edit anyone's leads; only you can assign.</p>
+      <p class="small muted">Tick the stages each person works. Leads route to whoever works their current stage (several people on one stage share the work evenly), unless you've assigned a lead to someone. Leads in a stage nobody works stay unassigned until you assign them. <b>Edit all leads</b> lets that person move and edit anyone's leads. <b>Assign (with your OK)</b> lets them request assignments, which wait for your approval.</p>
       <div class="table-wrap">
         <table class="t">
-          <thead><tr><th>Person</th>{STAGES.map((st) => <th style={{ textAlign: 'center' }}>{st.short}</th>)}<th title="May move and edit every lead, not just their own. Assigning stays with you.">Edit all leads</th><th>Active</th><th /></tr></thead>
+          <thead><tr><th>Person</th>{STAGES.map((st) => <th style={{ textAlign: 'center' }}>{st.short}</th>)}<th title="May move and edit every lead, not just their own. Assigning stays with you.">Edit all leads</th><th title="May ask to assign leads to anyone; nothing changes until you approve.">Assign (with your OK)</th><th>Active</th><th /></tr></thead>
           <tbody>
             {s.team.map((m) => (
               <tr style={{ cursor: 'default' }}>
@@ -104,6 +104,7 @@ function Team() {
                   </td>
                 ))}
                 <td><Toggle on={!!m.editAll} label={`${m.name} can edit all leads`} onChange={(v) => saveMember({ id: m.id, editAll: v })} /></td>
+                <td><Toggle on={!!m.assignAsk} label={`${m.name} can request assignments`} onChange={(v) => saveMember({ id: m.id, assignAsk: v })} /></td>
                 <td><Toggle on={m.active} label="Active" onChange={(v) => saveMember({ id: m.id, active: v })} /></td>
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   <MemberMenu m={m} onPin={() => saveMember({ id: m.id }, { newPin: true })} onRename={(n) => saveMember({ id: m.id, name: n })} onColor={(c) => saveMember({ id: m.id, color: c })} />

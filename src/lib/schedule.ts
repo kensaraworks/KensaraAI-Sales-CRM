@@ -168,6 +168,20 @@ export const assignTo = (who: ID | null) => ({ owner: who, handler: who });
 
 export const isMine = (a: Account, team: Member[], me: ID) => assigneeOf(a, team) === me;
 
+export const canRequestAssign = (team: Member[], me: ID) => team.some((m) => m.id === me && m.active && m.assignAsk);
+
+/**
+ * Assignment requests: someone with "request assigning" may ask (or withdraw their own ask); only the admin approves.
+ * Returns true/false when the op is a request, undefined when it isn't one. Mirrored in apps-script/Code.gs.
+ */
+export function requestAllowed(data: Record<string, any>, cur: Account | undefined, team: Member[], me: ID): boolean | undefined {
+  if (!data || !('assignReq' in data)) return undefined;
+  if (Object.keys(data).length !== 1) return false;
+  const v = data.assignReq;
+  if (v == null) return !!cur?.assignReq && cur.assignReq.by === me;
+  return canRequestAssign(team, me) && v.by === me && (v.to === null || team.some((t) => t.id === v.to && t.active));
+}
+
 /** Grace window in which you can still change (or undo) a lead you just handed off. */
 export const HANDOFF_GRACE_MS = 30 * 60e3;
 

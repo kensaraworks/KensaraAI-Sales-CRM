@@ -5,7 +5,8 @@ import { store, useStore } from '../lib/store';
 import { OUTCOME } from '../lib/outcomes';
 import { STAGES, stageLabel } from '../lib/defaults';
 import { describeNext } from '../lib/workflow';
-import { assigneeOf, actionLabel, assignTo, canEdit, stageMove } from '../lib/schedule';
+import { assigneeOf, actionLabel, assignTo, canEdit, canRequestAssign, stageMove } from '../lib/schedule';
+import { RequestAssign, RequestNote } from './Requests';
 
 /** True when the viewer may only look at this lead (it's someone else's). */
 const ReadOnly = createContext(false);
@@ -102,7 +103,12 @@ function Panel({ a }: { a: Account }) {
           <div class="banner" style={{ margin: '12px 0 0' }}>
             <Icon n="user" />
             <span class="small grow">{who ? <><b>{s.nameOf(who)}</b> is working this lead</> : <>Not assigned to anyone yet</>} — view only.</span>
+            {!a.assignReq && <RequestAssign leads={[a]} compact />}
           </div>
+        )}
+        <RequestNote a={a} />
+        {editable && !s.isX && !a.assignReq && canRequestAssign(s.team, s.me!.id) && (
+          <div class="row small muted" style={{ marginTop: '10px' }}>Reassign: <RequestAssign leads={[a]} compact /></div>
         )}
 
         {editable && <div class="acct-actions">

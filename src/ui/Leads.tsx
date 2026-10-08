@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Account, Contact, StageId, Status } from '../lib/types';
 import { useStore } from '../lib/store';
 import { STAGES, stageLabel } from '../lib/defaults';
-import { assigneeOf, actionLabel, assignTo, canEdit, stageMove } from '../lib/schedule';
+import { assigneeOf, actionLabel, assignTo, canEdit, canRequestAssign, stageMove } from '../lib/schedule';
+import { RequestAssign } from './Requests';
 import { extractLead } from '../lib/ai';
 import { queueEnrich, enrichState, onEnrich } from '../lib/enrichQueue';
 import { companyKey, fmtWhen, norm, rel, uniq } from '../lib/util';
@@ -36,7 +37,8 @@ export function Leads() {
       if (status !== 'all' && a.status !== status && !(status === 'open' && a.status === 'parked')) return false;
       if (stage && a.stage !== stage) return false;
       if (owner === '__none' && assigneeOf(a, s.team) !== null) return false;
-      if (owner && owner !== '__none' && assigneeOf(a, s.team) !== owner && a.owner !== owner) return false;
+      if (owner === '__req' && !a.assignReq) return false;
+      if (owner && owner !== '__none' && owner !== '__req' && assigneeOf(a, s.team) !== owner && a.owner !== owner) return false;
       if (city && a.city !== city) return false;
       if (sector && a.sector !== sector) return false;
       const cs = contacts.get(a.id) || [];
@@ -57,13 +59,45 @@ export function Leads() {
   }, [s.version, q, stage, status, owner, noPhone, city, sector, sort]);
 
   const me = s.me!.id;
-  const selectable = (a: Account) => canEdit(a, s.team, me, s.isX);
-  const toggle = (id: string) => { const n = new Set(sel); n.has(id) ? n.delete(id) : n.add(id); setSel(n); };
+  const asker = !s.isX && canRequestAssign(s.team, me);
+  const editable = (a: Account) => canEdit(a, s.team, me, s.isX);
+  // People who may request assignments can pick any lead (to ask for it); other actions only touch leads they can edit.
+  const selectable = (a: Account) => asker || editable(a);
   const selected = rows.filter((a) => sel.has(a.id));
+  const editSel = selected.filter(editable);
+
+  // Fast selection: press and drag down the tick boxes, or Shift-click to select a range.
+  const lastIdx = useRef<number | null>(null);
+  const dragOn = useRef<boolean | null>(null);
+  useEffect(() => {
+    const up = () => { dragOn.current = null; };
+    window.addEventListener('pointerup', up);
+    return () => window.removeEventListener('pointerup', up);
+  }, []);
+  const setMany = (ids: string[], on: boolean) => setSel((prev) => { const n = new Set(prev); ids.forEach((id) => (on ? n.add(id) : n.delete(id))); return n; });
+  const pressBox = (e: PointerEvent, a: Account, i: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectable(a)) return;
+    const on = !sel.has(a.id);
+    if (e.shiftKey && lastIdx.current != null) {
+      const [lo, hi] = [Math.min(lastIdx.current, i), Math.max(lastIdx.current, i)];
+      setMany(rows.slice(lo, hi + 1).filter(selectable).map((x) => x.id), on);
+    } else setMany([a.id], on);
+    lastIdx.current = i;
+    dragOn.current = on;
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
+  };
+  const enterBox = (a: Account, i: number) => {
+    if (dragOn.current == null || !selectable(a)) return;
+    setMany([a.id], dragOn.current);
+    lastIdx.current = i;
+  };
 
   const bulk = (label: string, set: (a: Account) => Record<string, any>) => {
-    s.batch(label, selected.map((a) => ({ rec: a, set: set(a) })));
-    toast(`${label} · ${selected.length}`, { undo: true });
+    if (!editSel.length) { toast("None of the selected leads are yours to change"); return; }
+    s.batch(label, editSel.map((a) => ({ rec: a, set: set(a) })));
+    toast(`${label} · ${editSel.length}${editSel.length < selected.length ? ` (${selected.length - editSel.length} not yours, skipped)` : ''}`, { undo: true });
     setSel(new Set());
   };
 
@@ -85,7 +119,7 @@ export function Leads() {
         {STAGES.map((st) => <button class={`chip ${stage === st.id ? 'is-on' : ''}`} onClick={() => setStage(stage === st.id ? '' : st.id)}>{st.short}</button>)}
         <button class={`chip ${noPhone ? 'is-on' : ''}`} onClick={() => setNoPhone(!noPhone)}>No phone</button>
         <select class="select" style={{ width: 'auto', height: '28px', fontSize: '12.5px' }} value={owner} onChange={(e) => setOwner((e.target as HTMLSelectElement).value)}>
-          <option value="">Anyone</option>{s.isX && <option value="__none">Unassigned</option>}{s.team.filter((m) => m.active).map((m) => <option value={m.id}>{m.name}</option>)}
+          <option value="">Anyone</option>{s.isX && <option value="__none">Unassigned</option>}{s.isX && <option value="__req">Awaiting your approval</option>}{s.team.filter((m) => m.active).map((m) => <option value={m.id}>{m.name}</option>)}
         </select>
         {cities.length > 1 && <select class="select" style={{ width: 'auto', height: '28px', fontSize: '12.5px' }} value={city} onChange={(e) => setCity((e.target as HTMLSelectElement).value)}><option value="">Any city</option>{cities.map((c) => <option>{c}</option>)}</select>}
         {sectors.length > 1 && <select class="select" style={{ width: 'auto', height: '28px', fontSize: '12.5px' }} value={sector} onChange={(e) => setSector((e.target as HTMLSelectElement).value)}><option value="">Any sector</option>{sectors.map((c) => <option>{c}</option>)}</select>}
@@ -95,6 +129,7 @@ export function Leads() {
       </div>
 
       <EnrichProgress />
+      <p class="tiny muted" style={{ margin: "0 0 6px" }}>Tip: press and drag down the tick boxes, or Shift-click, to select many at once.</p>
 
       <div class="table-wrap">
         <table class="t">
@@ -103,19 +138,19 @@ export function Leads() {
             <th>Company</th><th>Stage</th><th>Contact</th><th>Next</th><th>With</th><th>Updated</th>
           </tr></thead>
           <tbody>
-            {rows.slice(0, limit).map((a) => {
+            {rows.slice(0, limit).map((a, i) => {
               const cs = contacts.get(a.id) || [];
               const c: Contact | undefined = cs.find((x) => x.id === a.primaryContactId) || cs[0];
               const who = assigneeOf(a, s.team);
               const phone = c?.phones[0] || a.phones[0];
               return (
                 <tr class={sel.has(a.id) ? 'is-sel' : ''} onClick={() => openAccount(a.id)}>
-                  <td class="chk" onClick={(e) => { e.stopPropagation(); if (selectable(a)) toggle(a.id); }}>{selectable(a) && <input type="checkbox" checked={sel.has(a.id)} aria-label="Select" />}</td>
+                  <td class="chk" onPointerDown={(e) => pressBox(e as PointerEvent, a, i)} onPointerEnter={() => enterBox(a, i)} onClick={(e) => e.stopPropagation()}>{selectable(a) && <input type="checkbox" checked={sel.has(a.id)} readOnly tabIndex={-1} aria-label={`Select ${a.name}`} />}</td>
                   <td><b>{a.name}</b><div class="tiny muted">{[a.city, a.sector].filter(Boolean).join(' · ')}</div></td>
                   <td><Stage s={a.stage} />{a.status !== 'open' && <div class="tiny muted">{a.status === 'parked' ? 'Parked' : a.status === 'won' ? 'Won' : 'Closed'}</div>}</td>
                   <td>{c ? <>{c.name}<div class="tiny muted">{c.designation}</div></> : <span class="muted">—</span>}{!phone && <div class="tiny" style={{ color: 'var(--warn)' }}>no phone</div>}</td>
                   <td>{a.next ? <><span class="small">{actionLabel(a.next.type)}</span><div class={`tiny ${new Date(a.next.due) < new Date() ? '' : 'muted'}`} style={new Date(a.next.due) < new Date() ? { color: 'var(--bad)' } : {}}>{fmtWhen(a.next.due)}</div></> : <span class="muted">—</span>}</td>
-                  <td>{who ? <Avatar id={who} name={s.nameOf(who)} size="sm" /> : <span class="muted tiny">anyone</span>}</td>
+                  <td>{who ? <Avatar id={who} name={s.nameOf(who)} size="sm" /> : <span class="muted tiny">nobody</span>}{a.assignReq && <div class="tiny" style={{ color: 'var(--accent-ink)' }} title={`${s.nameOf(a.assignReq.by)} asked — waiting for approval`}>→ {a.assignReq.to ? s.nameOf(a.assignReq.to) : 'auto'}?</div>}</td>
                   <td class="tiny muted">{rel(a.updatedAt)}<div>{s.nameOf(a.updatedBy)}</div></td>
                 </tr>
               );
@@ -129,18 +164,21 @@ export function Leads() {
       {selected.length > 0 && (
         <div class="bulk">
           <b class="small">{selected.length} selected</b>
+          <RequestAssign leads={selected} compact onDone={() => setSel(new Set())} />
           {s.isX && <select class="select" onChange={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) bulk('Assigned', () => assignTo(v === '-' ? null : v)); (e.target as HTMLSelectElement).value = ''; }}>
             <option value="">Assign to…</option><option value="-">Auto (by stage)</option>{s.team.filter((m) => m.active).map((m) => <option value={m.id}>{m.name}</option>)}
           </select>}
+          {editSel.length > 0 && <>
           <select class="select" onChange={(e) => { const v = (e.target as HTMLSelectElement).value as StageId; if (v) bulk(`Moved to ${stageLabel(v)}`, (a) => stageMove(a, v, s.team)); (e.target as HTMLSelectElement).value = ''; }}>
             <option value="">Move to…</option>{STAGES.map((st) => <option value={st.id}>{st.label}</option>)}
           </select>
-          <button class="btn btn--sm" onClick={() => { const ids = selected.filter((a) => !a.phones.length && !(contacts.get(a.id) || []).some((c) => c.phones.length)).map((a) => a.id); if (!ids.length) { toast('All selected leads already have a number'); return; } queueEnrich(ids); toast(`Finding numbers for ${ids.length} — results appear on each lead`); setSel(new Set()); }}>
+          <button class="btn btn--sm" onClick={() => { const ids = editSel.filter((a) => !a.phones.length && !(contacts.get(a.id) || []).some((c) => c.phones.length)).map((a) => a.id); if (!ids.length) { toast('All selected leads already have a number'); return; } queueEnrich(ids); toast(`Finding numbers for ${ids.length} — results appear on each lead`); setSel(new Set()); }}>
             <Icon n="sparkle" /> Find numbers
           </button>
           {selected.some((a) => a.status === 'lost')
             ? <button class="btn btn--sm" onClick={() => bulk('Reopened', (a) => ({ status: 'open', lostReason: null, next: a.stage === 'new' ? null : { type: 'call', due: new Date().toISOString() } }))}>Reopen</button>
             : <button class="btn btn--sm" onClick={() => bulk('Removed from pipeline', () => ({ status: 'lost', lostReason: 'Removed from pipeline', next: null }))}>Close</button>}
+          </>}
           {rows.filter(selectable).length > selected.length && <button class="btn btn--sm" onClick={() => setSel(new Set(rows.filter(selectable).map((a) => a.id)))}>Select all {rows.filter(selectable).length}</button>}
           <button class="btn btn--sm right" onClick={() => setSel(new Set())}>Clear</button>
         </div>

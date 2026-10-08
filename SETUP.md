@@ -35,6 +35,8 @@ Open the site and sign in with **your name** and your **`ADMIN_KEY`** in the PIN
 In **Settings**:
 - **Team**: add each person. A 6-digit PIN is created and shown once; share it with them. Tick the stages each person works (e.g. Asha: New + Intro; Ravi: Shared + Warm; Neha: Discovery). Leads route automatically, and when a lead moves to a stage someone else works, it's handed to them.
 - **Assigning**: only you can assign. Use Leads → select → *Assign to…*, the ⋯ menu on a lead, or *Assign to* when importing. Your assignment always wins over stage routing until the lead moves on to another person's stage. Leads nobody works stay unassigned, and Today shows you how many.
+- **Extra access per person** (switches in Settings → Team): *Edit all leads* lets them move and edit anyone's leads. *Assign (with your OK)* lets them request assignments: they pick leads and "Request assign to…", and nothing changes until you approve. Your Today shows "N assignment requests" → Review → Approve / Reject, one by one or all at once.
+- **Selecting many leads**: in Leads, press and drag down the tick boxes, or Shift-click to select a range.
 - **What the team sees**: Today and fresh leads show only their own leads. Pipeline, Leads and search show everyone's, but other people's leads open view-only and can't be moved. The backend enforces this, not just the screen.
 - **Targets**: switch each target on or off and set values; per-person overrides are under Team.
 - **Workflow**: pacing limit, reminder delay, follow-up cadence, working hours, lunch and holidays.

@@ -8,7 +8,7 @@ import type { Account, AuditRow, Member, Op, Rec, Settings, Tombstone } from './
 import { DEFAULT_SETTINGS } from './defaults';
 import { rand } from './util';
 import { seedDemo } from './seed';
-import { canEdit, HANDOFF_GRACE_MS } from './schedule';
+import { canEdit, HANDOFF_GRACE_MS, requestAllowed } from './schedule';
 
 interface Session { user: string; x: boolean; device: string; label: string; at: string; seen: number }
 interface DB {
@@ -81,6 +81,9 @@ const short = (v: any) => { const s = v === undefined ? null : JSON.stringify(v)
 /** Same rules as the server: only the admin assigns; others change only the leads they work. */
 function permitted(db: DB, op: Op, cur: Rec | undefined, user: string): boolean {
   const data: any = op.t === 'put' ? op.data : op.t === 'set' ? op.set : {};
+  const req = op.kind === 'account' && op.t === 'set' ? requestAllowed(data, cur as Account | undefined, db.team, user) : undefined;
+  if (req !== undefined) return req;
+  if (data && 'assignReq' in data) return false;
   if (op.kind === 'account' && data && 'owner' in data) return false;
   if (op.kind === 'account' && data && data.handler != null && (cur as Account | undefined)?.handler !== data.handler) {
     const stage = 'stage' in data ? data.stage : (cur as Account | undefined)?.stage;
@@ -242,6 +245,7 @@ async function adminOp(db: DB, b: any, me: string): Promise<any> {
       }
       if (p.active != null) m.active = !!p.active;
       if (p.editAll != null) { if (p.editAll) m.editAll = true; else delete m.editAll; }
+      if (p.assignAsk != null) { if (p.assignAsk) m.assignAsk = true; else delete m.assignAsk; }
       if (p.stages) m.stages = p.stages;
       if (p.targets !== undefined) m.targets = p.targets || undefined;
       if (p.color) m.color = p.color;

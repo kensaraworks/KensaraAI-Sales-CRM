@@ -54,6 +54,8 @@ export interface Account extends Base {
   owner?: ID;
   /** Who is working the lead right now (admin assignment or stage hand-off). */
   handler?: ID | null;
+  /** A pending request to assign this lead (null `to` = back to automatic), awaiting the admin's approval. */
+  assignReq?: { to: ID | null; by: ID; at: string } | null;
   primaryContactId?: ID;
   next?: NextAction | null;
   /** Unanswered attempts in a row on the current contact. */
@@ -124,6 +126,8 @@ export interface Member {
   targets?: Partial<Record<TargetKey, number>>;
   /** Set by the admin: may move and edit any lead, not just their own (assigning stays admin-only). */
   editAll?: boolean;
+  /** Set by the admin: may request assignments, which take effect only once the admin approves. */
+  assignAsk?: boolean;
   color?: string;
 }
 

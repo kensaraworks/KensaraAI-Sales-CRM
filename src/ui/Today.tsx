@@ -6,6 +6,7 @@ import { fmtTime, fmtDay, plural, startOfDay } from '../lib/util';
 import { telHref, waHref } from '../lib/phone';
 import { Icon, Ring, Seg, Stage } from './components';
 import { openAccount, openCompose, openLog, set } from './bus';
+import { pendingRequests } from './Requests';
 
 export function useQueue(everyone = false): Queue {
   const s = store;
@@ -65,6 +66,14 @@ export function Today() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {s.isX && pendingRequests().length > 0 && (
+        <div class="banner banner--accent" style={{ marginTop: '14px', marginBottom: 0 }}>
+          <Icon n="check" />
+          <div class="small grow"><b>{plural(pendingRequests().length, 'assignment request')}</b> waiting for your approval.</div>
+          <button class="btn btn--sm btn--primary" onClick={() => set({ requests: true })}>Review</button>
         </div>
       )}
 

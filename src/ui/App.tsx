@@ -16,6 +16,7 @@ import { AccountPanel } from './AccountPanel';
 import { LogSheet } from './LogSheet';
 import { ComposeSheet } from './Compose';
 import { Palette } from './Palette';
+import { RequestsSheet } from './Requests';
 
 // Loaded only for an elevated session; it isn't part of the main bundle.
 const Control = lazy(() => import('../ops/Control'));
@@ -85,6 +86,7 @@ export function App() {
       <ComposeSheet />
       <AddLead />
       <Palette />
+      <RequestsSheet />
       <Toasts />
       <Confetti />
     </div>
