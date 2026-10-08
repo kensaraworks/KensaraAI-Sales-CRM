@@ -76,6 +76,9 @@ function Team() {
     const r = await x('member', { member, ...opts });
     if (!r.ok) { toast(r.error || 'Failed'); return null; }
     if (r.pin) setShown({ name: r.member.name, pin: r.pin });
+    // An out-of-date backend silently drops settings it doesn't know — say so instead of flipping back.
+    const dropped = (['editAll', 'assignAsk'] as const).filter((k) => k in member && !!member[k] !== !!r.member?.[k]);
+    if (dropped.length) toast("That didn't save — your Apps Script backend is out of date. Paste the latest Code.gs and deploy a new version.", { ms: 9000 });
     store.sync();
     return r;
   };

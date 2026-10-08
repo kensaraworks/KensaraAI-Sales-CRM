@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'preact/compat';
 import { useEffect, useState } from 'preact/hooks';
-import { store, useStore } from '../lib/store';
+import { BACKEND_VERSION, store, useStore } from '../lib/store';
 import { level } from '../lib/stats';
 import { rel } from '../lib/util';
 import { Avatar, Confetti, Icon, Toasts } from './components';
@@ -71,6 +71,12 @@ export function App() {
       <Nav route={route} />
       <main class="main">
         <MobileTop />
+        {s.isX && s.backendVersion >= 0 && s.backendVersion < BACKEND_VERSION && (
+          <div class="banner" style={{ background: 'var(--bad-soft)' }}>
+            <Icon n="bolt" />
+            <div class="small grow"><b>Your Apps Script backend is out of date</b> (version {s.backendVersion || 'old'}, this app needs {BACKEND_VERSION}). Until you update it, some settings (like the Team switches) won't save. In Apps Script: paste the latest <code>Code.gs</code> → Deploy → Manage deployments → Edit → New version → Deploy.</div>
+          </div>
+        )}
         {route === 'today' && <Today />}
         {route === 'pipeline' && <Pipeline />}
         {route === 'leads' && <Leads />}

@@ -9,6 +9,7 @@ import { DEFAULT_SETTINGS } from './defaults';
 import { rand } from './util';
 import { seedDemo } from './seed';
 import { canEdit, HANDOFF_GRACE_MS, requestAllowed } from './schedule';
+import { BACKEND_VERSION } from './store';
 
 interface Session { user: string; x: boolean; device: string; label: string; at: string; seen: number }
 interface DB {
@@ -207,7 +208,7 @@ export async function mockHandle(b: any): Promise<any> {
       const changes = [...Object.values(db.records), ...(full ? [] : Object.values(db.tombs))].filter((r) => r.rev > since);
       save(db);
       return {
-        ok: true, seq: db.seq, epoch: db.epoch, floor: db.floor, changes, ...res, full, cfgRev: db.cfgRev,
+        ok: true, bv: BACKEND_VERSION, seq: db.seq, epoch: db.epoch, floor: db.floor, changes, ...res, full, cfgRev: db.cfgRev,
         ...(b.cfgRev !== db.cfgRev ? { settings: db.settings, team: pubTeam(db) } : {}),
         claims: Object.fromEntries(Object.entries(db.claims).filter(([, c]) => c.user !== m.id)),
         ...(x ? { me: { id: m.id, name: m.name, x: 1 } } : {}),

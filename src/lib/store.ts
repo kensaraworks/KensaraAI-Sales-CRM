@@ -23,6 +23,8 @@ const POLL_ACTIVE_MS = 5000;
 const POLL_IDLE_MS = 15000;
 const POLL_HIDDEN_MS = 60000;
 const BATCH = 500;
+/** The apps-script/Code.gs VERSION this build needs (keep in step with that file). */
+export const BACKEND_VERSION = 4;
 
 export function deviceId(): string {
   try {
@@ -77,6 +79,8 @@ class Store {
   ready = false;
   undoStack: UndoEntry[] = [];
   version = 0;
+  /** Version reported by the live backend (0 = an old copy that doesn't report one). */
+  backendVersion = -1;
   /** Shows a message to the user (wired to the toast in the UI). */
   onNotice?: (msg: string) => void;
   private subs = new Set<() => void>();
@@ -236,6 +240,7 @@ class Store {
       if (r.settings) { this.settings = withDefaults(r.settings); dataChanged = true; this.lastRemote = Date.now(); }
       if (r.team) { this.team = r.team; dataChanged = true; }
       this.cfgRev = r.cfgRev;
+      this.backendVersion = Number((r as any).bv) || 0;
       const claims = r.claims || {};
       if (JSON.stringify(claims) !== JSON.stringify(this.claims)) { this.claims = claims; dataChanged = true; }
       if (dataChanged || !this.ready) this.rebuild();

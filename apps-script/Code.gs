@@ -20,7 +20,8 @@
  * The bound spreadsheet gets: "Audit" (every change), "Sign-ins", and a read-only "Leads" view.
  */
 
-const VERSION = 1;
+/** Bump whenever this file changes in a way the app depends on (the app warns the admin when the live copy is older). */
+const VERSION = 4;
 const ROOT_NAME = 'Kensara Sales CRM';
 const MAX_BODY = 8 * 1024 * 1024;
 const SESSION_DAYS = 180;
@@ -191,7 +192,7 @@ function sync(a, b) {
   const claims = updateClaims(a.id, b.focus);
   const cfg = loadConfig();
   const resp = {
-    ok: true, seq: meta.seq, epoch: meta.epoch, floor: meta.floor || 0, changes: changes, applied: res.applied, rejected: res.rejected,
+    ok: true, bv: VERSION, seq: meta.seq, epoch: meta.epoch, floor: meta.floor || 0, changes: changes, applied: res.applied, rejected: res.rejected,
     full: full, cfgRev: cfg.cfgRev, claims: claims,
   };
   if (b.cfgRev !== cfg.cfgRev) { resp.settings = cfg.settings; resp.team = pubTeam(cfg); }
