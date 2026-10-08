@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'preact/hooks';
 import type { Account, Activity, Channel, Contact, Member, Rec, Settings, StageId, TargetKey } from '../lib/types';
-import { store, useStore, deviceId } from '../lib/store';
+import { BACKEND_VERSION, store, useStore, deviceId } from '../lib/store';
 import { post } from '../lib/api';
 import { STAGES, DEFAULT_SETTINGS } from '../lib/defaults';
 import { fmtWhen, rel } from '../lib/util';
@@ -26,11 +26,15 @@ if (!(window as any).__ksSave) {
 }
 
 export default function Control() {
+  useStore(); // re-render when the backend version arrives
   const [tab, setTab] = useState<Tab>('team');
   const tabs: [Tab, string][] = [['team', 'Team'], ['targets', 'Targets'], ['workflow', 'Workflow'], ['messaging', 'Messaging & AI'], ['access', 'Sign-ins'], ['saves', 'Checkpoints'], ['removed', 'Removed'], ['security', 'Security']];
   return (
     <div>
-      <div class="page-head"><div><h1>Settings</h1><p class="muted small">Only you can see this. <span class="kbd">Ctrl S</span> saves a checkpoint from anywhere.</p></div></div>
+      <div class="page-head"><div><h1>Settings</h1><p class="muted small">Only you can see this. <span class="kbd">Ctrl S</span> saves a checkpoint from anywhere.</p>
+        <p class="tiny" style={{ marginTop: '4px', color: store.backendVersion >= BACKEND_VERSION ? 'var(--good)' : 'var(--bad)' }}>
+          Backend: version {store.backendVersion > 0 ? store.backendVersion : store.backendVersion === 0 ? '1 (old)' : '…'} · this app needs {BACKEND_VERSION}{store.backendVersion >= BACKEND_VERSION ? ' ✓' : ' — update Apps Script'}
+        </p></div></div>
       <div class="row wrap" style={{ marginBottom: '18px' }}>
         {tabs.map(([t, l]) => <button class={`chip ${tab === t ? 'is-on' : ''}`} style={{ height: '30px', padding: '0 12px' }} onClick={() => setTab(t)}>{l}</button>)}
       </div>
@@ -73,12 +77,18 @@ function Team() {
   const [shown, setShown] = useState<{ name: string; pin: string } | null>(null);
 
   const saveMember = async (member: Partial<Member>, opts: { newPin?: boolean; pin?: string } = {}) => {
-    const r = await x('member', { member, ...opts });
-    if (!r.ok) { toast(r.error || 'Failed'); return null; }
+    // Show the change straight away; the server's answer then confirms or corrects it.
+    const prev = store.team;
+    const patchTeam = (m: Partial<Member>) => { store.team = store.team.map((t) => (t.id === m.id ? { ...t, ...m } : t)); store.emit(); };
+    if (member.id) patchTeam(member);
+    let r: any;
+    try { r = await x('member', { member, ...opts }); } catch { r = { ok: false, error: 'Offline — not saved' }; }
+    if (!r.ok) { store.team = prev; store.emit(); toast(r.error || 'Failed'); return null; }
     if (r.pin) setShown({ name: r.member.name, pin: r.pin });
     // An out-of-date backend silently drops settings it doesn't know — say so instead of flipping back.
     const dropped = (['editAll', 'assignAsk'] as const).filter((k) => k in member && !!member[k] !== !!r.member?.[k]);
-    if (dropped.length) toast("That didn't save — your Apps Script backend is out of date. Paste the latest Code.gs and deploy a new version.", { ms: 9000 });
+    if (dropped.length) toast(`Not saved: your live Apps Script backend is out of date (version ${store.backendVersion || 'old'}). Deploy the latest Code.gs as a new version of the existing deployment.`, { ms: 12000 });
+    if (r.member?.id) { store.team = store.team.some((t) => t.id === r.member.id) ? store.team.map((t) => (t.id === r.member.id ? r.member : t)) : [...store.team, r.member]; store.emit(); }
     store.sync();
     return r;
   };
