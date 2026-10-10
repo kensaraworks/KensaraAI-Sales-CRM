@@ -1,6 +1,6 @@
 # Kensara Sales — setup
 
-Everything runs on free tiers: **Netlify** (hosting), **Google Apps Script + Drive + Sheets** (backend and storage), **Gemini** (AI, free key), **Groq** (optional AI fallback). There is no paid database.
+Everything runs on free tiers: **Vercel Hobby** (hosting), **Google Apps Script + Drive + Sheets** (backend and storage), **Gemini** (AI, free key), **Groq** (optional AI fallback). There is no paid database.
 
 Allow about 20 minutes.
 
@@ -21,12 +21,12 @@ Allow about 20 minutes.
 
 > "Anyone" only means the URL is reachable. Every request is checked against a signed-in session, and settings actions are checked against your elevated session.
 
-## 2. Frontend (Netlify)
+## 2. Frontend (Vercel, free Hobby plan)
 
 1. The code lives at [github.com/kensaraworks/KensaraAI-Sales-CRM](https://github.com/kensaraworks/KensaraAI-Sales-CRM).
-2. Netlify → **Add new site → Import from Git** → pick `kensaraworks/KensaraAI-Sales-CRM`. Leave the build settings as they are (they come from `netlify.toml`).
-3. In [`netlify.toml`](netlify.toml) replace `VITE_ENDPOINT = "mock"` with your `/exec` URL, then commit and push. (Set it in this file, not in the Netlify dashboard: the file wins. While it says `mock`, the site is a demo with sample data.)
-4. Deploy. Every team member then uses the same site URL. On phones, choose *Add to Home Screen* and it behaves like an app.
+2. Sign in at [vercel.com](https://vercel.com) with GitHub → **Add New… → Project** → import `kensaraworks/KensaraAI-Sales-CRM`. Vercel reads the settings from [`vercel.json`](vercel.json) (Vite, `npm run build`, output `dist`), so leave everything as it is and click **Deploy**.
+3. The backend URL lives in [`.env.production`](.env.production) (`VITE_ENDPOINT=…/exec`), so there's nothing to set in the Vercel dashboard. To point at a different backend, change that line, then commit and push. (A `VITE_ENDPOINT` set in Vercel → Settings → Environment Variables would take priority over the file; leave it unset to avoid confusion.)
+4. Every push to `main` redeploys automatically. Everyone uses the same site URL (`https://<project>.vercel.app`, or add your own domain under Settings → Domains). On phones, choose *Add to Home Screen* and it behaves like an app.
 
 ## 3. First sign-in (you)
 
